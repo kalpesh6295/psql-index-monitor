@@ -1,0 +1,114 @@
+{
+  "plan": "unmodified",
+  "clone": "indexdoctor_before",
+  "applied": [],
+  "failed": [],
+  "skipped": [],
+  "measurement": {
+    "queries": [
+      {
+        "query": "orders_by_user.sql",
+        "mean_ms": 5.83,
+        "p50_ms": 5.39,
+        "runs": 15
+      },
+      {
+        "query": "events_recent_by_user.sql",
+        "mean_ms": 24.76,
+        "p50_ms": 24.37,
+        "runs": 15
+      },
+      {
+        "query": "page_views_daily_rollup.sql",
+        "mean_ms": 25.29,
+        "p50_ms": 24.55,
+        "runs": 15
+      },
+      {
+        "query": "page_views_by_site.sql",
+        "mean_ms": 3.99,
+        "p50_ms": 3.98,
+        "runs": 15
+      },
+      {
+        "query": "user_by_email.sql",
+        "mean_ms": 0.24,
+        "p50_ms": 0.23,
+        "runs": 15
+      },
+      {
+        "query": "users_by_country.sql",
+        "mean_ms": 0.86,
+        "p50_ms": 0.85,
+        "runs": 15
+      },
+      {
+        "query": "session_by_token.sql",
+        "mean_ms": 0.2,
+        "p50_ms": 0.2,
+        "runs": 15
+      },
+      {
+        "query": "sessions_by_user.sql",
+        "mean_ms": 0.21,
+        "p50_ms": 0.2,
+        "runs": 15
+      },
+      {
+        "query": "order_items_by_order.sql",
+        "mean_ms": 0.21,
+        "p50_ms": 0.2,
+        "runs": 15
+      },
+      {
+        "query": "product_by_sku.sql",
+        "mean_ms": 0.21,
+        "p50_ms": 0.21,
+        "runs": 15
+      },
+      {
+        "query": "products_by_ids.sql",
+        "mean_ms": 0.22,
+        "p50_ms": 0.22,
+        "runs": 15
+      },
+      {
+        "query": "messages_by_thread.sql",
+        "mean_ms": 0.22,
+        "p50_ms": 0.22,
+        "runs": 15
+      },
+      {
+        "query": "messages_by_sender.sql",
+        "mean_ms": 0.21,
+        "p50_ms": 0.21,
+        "runs": 15
+      },
+      {
+        "query": "invoices_by_user.sql",
+        "mean_ms": 0.25,
+        "p50_ms": 0.25,
+        "runs": 15
+      },
+      {
+        "query": "orders_recent.sql",
+        "mean_ms": 0.22,
+        "p50_ms": 0.22,
+        "runs": 15
+      },
+      {
+        "query": "audit_by_actor.sql",
+        "mean_ms": 0.19,
+        "p50_ms": 0.19,
+        "runs": 15
+      },
+      {
+        "query": "dunning_job.sql",
+        "mean_ms": 0.64,
+        "p50_ms": 0.62,
+        "runs": 15
+      }
+    ],
+    "projected_window_ms": 36907
+  }
+}

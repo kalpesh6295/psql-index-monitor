@@ -1,18 +1,30 @@
 {
-  "name": "index-monitor",
+  "name": "index-doctor",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite --config vite.config.ts",
-    "build:client": "vite build --config vite.config.ts"
+    "build:client": "vite build --config vite.config.ts",
+    "typecheck": "tsc --noEmit",
+    "sandbox:setup": "bash eval/sandbox/setup.sh",
+    "reproduce": "bash eval/sandbox/setup.sh && SANDBOX_DATABASE_URL=postgres://postgres:postgres@localhost:5499/indexdoctor tsx eval/baseline/run.ts && tsx eval/score.ts eval/results/baseline.json && echo '\\nBaseline reproduced. For the agent: add ANTHROPIC_API_KEY to .env, export SANDBOX_DATABASE_URL (printed above), then: npm run agent && npm run eval'",
+    "workload": "tsx eval/sandbox/workload.ts",
+    "measure:before": "tsx eval/apply.ts --none before",
+    "baseline": "tsx eval/baseline/run.ts",
+    "agent": "tsx agent/run.ts",
+    "eval": "tsx eval/score.ts eval/results/baseline.json eval/results/agent.json",
+    "apply:agent": "tsx eval/apply.ts eval/results/agent.json agent",
+    "apply:baseline": "tsx eval/apply.ts eval/results/baseline.json baseline"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

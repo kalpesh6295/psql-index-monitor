@@ -1,0 +1,55 @@
+{
+  "tool": "index-doctor-agent",
+  "model": "claude-haiku-4-5",
+  "generated_at": "2026-08-28T18:02:50.742Z",
+  "usage": {
+    "input": 205777,
+    "output": 12291,
+    "cacheRead": 0,
+    "estimated_cost_usd": 1.34
+  },
+  "recommendations": [],
+  "cleared": [
+    {
+      "action": "keep",
+      "table": "items",
+      "index": "idx_items_status",
+      "evidence": [
+        "inspect_index confirms idx_items_status: 0 scans in current window, 1280 kB size, not backing any constraint, no partial predicate",
+        "pg_stat_user_tables shows items table has 152 seq_scans, 0 idx_scans in monitoring period (uptime 1h 44m)",
+        "EXPLAIN shows query planner ACTIVELY CHOOSES idx_items_status for: (1) SELECT COUNT(*) WHERE status='active' → Index Only Scan cost 0.29, (2) SELECT id,name WHERE status='inactive' → Index Scan cost 0.29",
+        "Query planner chooses seq scan ONLY for SELECT * LIMIT 100 because status is 50-50 distributed (100K 'active' / 100K 'archived' rows) and LIMIT takes the cheapest path via bulk read",
+        "Status column has only n_distinct=2, making index highly selective for aggregate and small-result queries",
+        "Monitoring window is very short (1h 44m); zero scans reflect current workload snapshot, not sustained disuse",
+        "Application query catalog not configured; cannot confirm absence of scheduled jobs that may rely on index"
+      ],
+      "reason": "The candidate correctly notes this should be conservative—the index IS actively used by the query planner for aggregate queries and selective lookups. Zero idx_scan in a 1h 44m window during a workload that favors full-table reads is not evidence of disuse. Dropping it would force the planner to seq scan for COUNT() queries and selective single-row lookups, degrading performance. Recommend: (1) extend monitoring window to ≥7 days to capture periodic workloads, (2) enable pg_stat_statements or app query catalog to verify absence of scheduled jobs that filter by status, (3) only reconsider drop if sustained zero usage is confirmed across longer period AND no application queries reference status in WHERE or ORDER BY clauses.\""
+    },
+    {
+      "action": "no_action",
+      "table": "items",
+      "evidence": [
+        "Index idx_items_status already exists on items(status): CREATE INDEX idx_items_status ON public.items USING btree (status)",
+        "pg_stat_user_indexes shows idx_items_status with idx_scan=0 over observation window, confirming no runtime usage",
+        "Status column has only 2 distinct values (n_distinct=2), with actual data showing ALL 200k rows are 'active' and 0 rows are 'inactive'",
+        "Table seq_scan=152 reading 30M tuples (avg 197k/scan) indicates full-table or large-range scans, not selective status filters",
+        "EXPLAIN for 'WHERE status=active' shows planner chooses idx_items_status (Bitmap Index Scan cost 1101.62..4022.37), but runtime stats show zero executions",
+        "Workload does not filter by status; 152 seq_scans are from unfiltered queries like 'SELECT * FROM items'"
+      ],
+      "reason": "The hypothesis incorrectly proposes adding an index that already exists. The zero scan count on idx_items_status is not evidence that a NEW index is needed; it is evidence that status-filtered queries do NOT occur in the workload. The status column lacks sufficient cardinality (all rows have 'active') to make an index useful even if queries did filter on it. Creating a duplicate index would increase storage and maintenance cost without benefit. If the intent is to evaluate whether the existing idx_items_status should be kept or dropped, that should be a separate drop_index candidate (though the index is well-defined and could be useful for future status='inactive' queries if data patterns change)."
+    },
+    {
+      "action": "no_action",
+      "table": "items",
+      "evidence": [
+        "pg_stat_user_tables: last_autovacuum=2026-08-28 18:01:17, last_autoanalyze=2026-08-28 18:01:17 (fresh statistics)",
+        "n_dead_tup=0, n_mod_since_analyze=0 (no bloat, no pending changes)",
+        "Heap: 13 MB / 1667 pages / 200,000 rows (~120 tuples/page) — healthy fill ratio",
+        "2 indexes present: items_pkey (primary, 4408 kB, 1 scan) and idx_items_status (non-unique, 1280 kB, 9 scans)",
+        "No duplicate or conflicting indexes detected",
+        "Autovacuum settings: using database defaults (reloptions=null) — appropriate for this table"
+      ],
+      "reason": "Table is in optimal health. Autovacuum and analyze are functioning correctly with recent runs. No maintenance action is needed. pgstattuple unavailable but pg_class tuple/page counts confirm healthy distribution."
+    }
+  ]
+}

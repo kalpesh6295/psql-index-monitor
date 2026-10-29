@@ -14,30 +14,7 @@ interface DataTableProps<T> {
   searchKeys?: (keyof T)[]
 }
 
-const thStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  textAlign: 'left',
-  fontSize: 11,
-  textTransform: 'uppercase',
-  letterSpacing: 1,
-  color: '#888',
-  borderBottom: '1px solid #333',
-  position: 'sticky',
-  top: 0,
-  background: '#1e1e2e',
-  cursor: 'pointer',
-  userSelect: 'none',
-  whiteSpace: 'nowrap',
-}
-
-const tdStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  fontSize: 13,
-  borderBottom: '1px solid #2a2a3a',
-  color: '#ccc',
-}
-
-export function DataTable<T extends Record<string, unknown>>({ columns, data, searchKeys }: DataTableProps<T>) {
+export function DataTable<T extends object>({ columns, data, searchKeys }: DataTableProps<T>) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -69,40 +46,57 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, se
     }
   }
 
+  // A column is numeric (right-aligned, tabular figures) when the underlying
+  // values are numbers or purely numeric strings — sizes like "17 MB" stay left.
+  const numericCols = useMemo(() => {
+    const set = new Set<string>()
+    const sample = data.slice(0, 20)
+    for (const col of columns) {
+      const vals = sample.map((r) => r[col.key as keyof T]).filter((v) => v !== null && v !== undefined && v !== '')
+      if (vals.length > 0 && vals.every((v) => typeof v === 'number' || /^-?[\d,]+(\.\d+)?$/.test(String(v)))) {
+        set.add(String(col.key))
+      }
+    }
+    return set
+  }, [columns, data])
+
+  const colClass = (key: string) =>
+    [numericCols.has(key) ? 'num' : '', sortKey === key ? 'sorted' : ''].filter(Boolean).join(' ') || undefined
+
   return (
     <div>
       {searchKeys && (
-        <input
-          type="text"
-          placeholder="Search..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{
-            width: '100%',
-            padding: '10px 14px',
-            marginBottom: 12,
-            background: '#2a2a3a',
-            border: '1px solid #444',
-            borderRadius: 8,
-            color: '#e0e0e0',
-            fontSize: 14,
-            outline: 'none',
-            boxSizing: 'border-box',
-          }}
-        />
+        <div className="search-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            type="text"
+            className="input"
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
       )}
-      <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid #333' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="dt-wrap">
+        <table className="dt">
           <thead>
             <tr>
               {columns.map((col) => (
                 <th
                   key={String(col.key)}
-                  style={{ ...thStyle, width: col.width }}
+                  className={colClass(String(col.key))}
+                  style={{ width: col.width }}
                   onClick={() => col.sortable !== false && handleSort(String(col.key))}
                 >
                   {col.label}
-                  {sortKey === String(col.key) && (sortDir === 'asc' ? ' ▲' : ' ▼')}
+                  {col.sortable !== false && (
+                    <span className="sort-ind">
+                      {sortKey === String(col.key) ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
+                    </span>
+                  )}
                 </th>
               ))}
             </tr>
@@ -110,15 +104,15 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, se
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} style={{ ...tdStyle, textAlign: 'center', color: '#666' }}>
+                <td colSpan={columns.length} style={{ textAlign: 'center', color: 'var(--ink-3)' }}>
                   No data found
                 </td>
               </tr>
             ) : (
               sorted.map((row, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : '#1a1a2a' }}>
+                <tr key={i}>
                   {columns.map((col) => (
-                    <td key={String(col.key)} style={tdStyle}>
+                    <td key={String(col.key)} className={numericCols.has(String(col.key)) ? 'num' : undefined}>
                       {col.render ? col.render(row) : String(row[col.key as keyof T] ?? '')}
                     </td>
                   ))}
@@ -128,7 +122,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, se
           </tbody>
         </table>
       </div>
-      <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 8 }}>
         {sorted.length} row{sorted.length !== 1 ? 's' : ''}
       </div>
     </div>

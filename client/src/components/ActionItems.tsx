@@ -32,6 +32,7 @@ interface ActionItemsProps {
   idxRatio: IndexTableRatio[] | null
   missing: MissingIndex[] | null
   seqVsIdx: SeqVsIdx[] | null
+  privacy?: boolean
 }
 
 const severityOrder: Record<Severity, number> = { critical: 0, warning: 1, info: 2 }
@@ -84,7 +85,7 @@ function computeActions(props: ActionItemsProps): ActionItem[] {
         detail: `Indexes under 10 MB with zero scans across tables: ${[...new Set(small.map((s) => s.table_name))]
           .slice(0, 10)
           .join(', ')}${small.length > 10 ? '...' : ''}`,
-        impact: `Reclaim ~${formatBytes(totalSize)} total`,
+        impact: `Reclaim ~${props.privacy ? '••• MB' : formatBytes(totalSize)} total`,
         table: '',
       })
     }
@@ -248,91 +249,66 @@ export function ActionItems(props: ActionItemsProps) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <div style={{ background: '#3b1219', borderRadius: 8, padding: '10px 16px', minWidth: 120 }}>
-          <div style={{ fontSize: 11, color: '#f87171', textTransform: 'uppercase', letterSpacing: 1 }}>Critical</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: '#f87171' }}>{counts.critical}</div>
+      <div style={{ display: 'flex', gap: 14, marginBottom: 22, flexWrap: 'wrap' }}>
+        <div className="tile" style={{ maxWidth: 220 }}>
+          <div className="tile-label" style={{ color: 'var(--crit)' }}>Critical</div>
+          <div className="tile-value" style={{ color: 'var(--crit)' }}>{counts.critical}</div>
         </div>
-        <div style={{ background: '#3b2f12', borderRadius: 8, padding: '10px 16px', minWidth: 120 }}>
-          <div style={{ fontSize: 11, color: '#facc15', textTransform: 'uppercase', letterSpacing: 1 }}>Warning</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: '#facc15' }}>{counts.warning}</div>
+        <div className="tile" style={{ maxWidth: 220 }}>
+          <div className="tile-label" style={{ color: 'var(--warn)' }}>Warning</div>
+          <div className="tile-value" style={{ color: 'var(--warn)' }}>{counts.warning}</div>
         </div>
-        <div style={{ background: '#12233b', borderRadius: 8, padding: '10px 16px', minWidth: 120 }}>
-          <div style={{ fontSize: 11, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: 1 }}>Info</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: '#60a5fa' }}>{counts.info}</div>
+        <div className="tile" style={{ maxWidth: 220 }}>
+          <div className="tile-label" style={{ color: 'var(--info)' }}>Info</div>
+          <div className="tile-value" style={{ color: 'var(--info)' }}>{counts.info}</div>
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         {categoryFilters.map((c) => (
-          <button
-            key={c}
-            onClick={() => setFilter(c)}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: 'none',
-              background: filter === c ? '#3b3b5a' : '#2a2a3a',
-              color: filter === c ? '#fff' : '#888',
-              cursor: 'pointer',
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
+          <button key={c} onClick={() => setFilter(c)} className={`chip${filter === c ? ' active' : ''}`}>
             {c === 'all' ? 'All' : categoryLabels[c]}
             {c !== 'all' && ` (${items.filter((i) => i.category === c).length})`}
           </button>
         ))}
         <input
           type="text"
+          className="input"
           placeholder="Filter by table..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{
-            marginLeft: 'auto',
-            padding: '6px 12px',
-            background: '#2a2a3a',
-            border: '1px solid #444',
-            borderRadius: 6,
-            color: '#e0e0e0',
-            fontSize: 13,
-            outline: 'none',
-            width: 200,
-          }}
+          style={{ marginLeft: 'auto', width: 220 }}
         />
       </div>
 
       {filtered.length === 0 ? (
-        <div style={{ padding: 20, color: '#4ade80', background: '#123b1e', borderRadius: 8 }}>
-          No action items found — looking good!
-        </div>
+        <div className="notice-good">No action items found — looking good!</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {filtered.map((item, i) => (
             <div
               key={i}
+              className="card"
               style={{
-                background: '#1e1e2e',
-                borderRadius: 10,
                 padding: '14px 18px',
-                borderLeft: `4px solid ${
-                  item.severity === 'critical' ? '#f87171' : item.severity === 'warning' ? '#facc15' : '#60a5fa'
+                borderLeft: `3px solid ${
+                  item.severity === 'critical' ? 'var(--crit)' : item.severity === 'warning' ? 'var(--warn)' : 'var(--info)'
                 }`,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                 <Badge color={severityColor[item.severity]}>{item.severity.toUpperCase()}</Badge>
                 <Badge color={categoryColor[item.category]}>{categoryLabels[item.category]}</Badge>
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#e0e0e0' }}>{item.title}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>{item.title}</span>
               </div>
-              <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>{item.detail}</div>
-              <div style={{ fontSize: 12, color: '#4ade80' }}>{item.impact}</div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginBottom: 4 }}>{item.detail}</div>
+              <div style={{ fontSize: 12.5, color: '#5fd374' }}>{item.impact}</div>
             </div>
           ))}
         </div>
       )}
 
-      <div style={{ fontSize: 12, color: '#666', marginTop: 12 }}>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 12 }}>
         {filtered.length} action item{filtered.length !== 1 ? 's' : ''}
       </div>
     </div>

@@ -1,0 +1,109 @@
+{
+  "description": "Authoritative list of planted issues in the Index Doctor sandbox. The eval scorer (eval/score.ts) compares tool output against these cases. 'kind' semantics: positive = the tool must recommend this action; trap = the tool must NOT recommend the listed wrong_action; control = the tool must emit no recommendation for this table.",
+  "cases": [
+    {
+      "id": "GT-1",
+      "kind": "positive",
+      "table": "orders",
+      "action": "add_index",
+      "columns": ["user_id"],
+      "why": "orders_by_user.sql runs ~1200x/window filtering on user_id with no index; every call is a 300k-row seq scan."
+    },
+    {
+      "id": "GT-2",
+      "kind": "positive",
+      "table": "events",
+      "action": "add_index",
+      "columns": ["user_id", "created_at"],
+      "why": "events_recent_by_user.sql runs ~400x/window and is among the most expensive queries by total time, but the planner satisfies it via the created_at index so the table shows ~zero seq scans — seq-scan heuristics are blind to it. A composite (user_id, created_at) index fixes it."
+    },
+    {
+      "id": "GT-3",
+      "kind": "positive",
+      "table": "order_items",
+      "action": "drop_index",
+      "index_any_of": ["idx_order_items_order_id", "idx_order_items_order"],
+      "why": "Two identical btrees on (order_id); exactly one should be dropped."
+    },
+    {
+      "id": "GT-4",
+      "kind": "positive",
+      "table": "products",
+      "action": "drop_index",
+      "index_any_of": ["idx_products_price"],
+      "why": "Large index never used by any query in the catalog or the stats window."
+    },
+    {
+      "id": "GT-5",
+      "kind": "positive",
+      "table": "events",
+      "action": "drop_index",
+      "index_any_of": ["idx_events_type"],
+      "why": "Unused index on a high-write table."
+    },
+    {
+      "id": "GT-6",
+      "kind": "positive",
+      "table": "events",
+      "action": "drop_index",
+      "index_any_of": ["idx_events_source"],
+      "why": "Unused index on a high-write table."
+    },
+    {
+      "id": "GT-7",
+      "kind": "positive",
+      "table": "messages",
+      "action": "reindex",
+      "index_any_of": ["idx_messages_sender", "idx_messages_thread", "messages_pkey"],
+      "why": "80% of rows deleted then plain-vacuumed; both btrees kept their pages and are heavily bloated while still used. Bonus difficulty: btree deduplication makes the dashboard's width-based bloat estimator blind to most of it."
+    },
+    {
+      "id": "GT-8",
+      "kind": "positive",
+      "table": "audit_logs",
+      "action": "vacuum",
+      "why": "Autovacuum disabled and ~70% of rows updated; dead-row ratio is far past healthy."
+    },
+    {
+      "id": "GT-9",
+      "kind": "trap",
+      "table": "invoices",
+      "wrong_action": "drop_index",
+      "index_any_of": ["idx_invoices_unpaid_due"],
+      "why": "Partial index shows idx_scan = 0 in the window, but the monthly dunning job (sandbox/queries/dunning_job.sql) depends on it. Recommending DROP is a failure; KEEP (or flag for review with the dependency named) is correct."
+    },
+    {
+      "id": "GT-10",
+      "kind": "trap",
+      "table": "page_views",
+      "wrong_action": "add_index",
+      "why": "High seq-scan count and >100k rows bait the 'missing index' heuristic, but the workload aggregates the whole table or filters on a 2-value column — no btree helps and the planner would ignore it. Recommending ADD INDEX is a failure."
+    },
+    {
+      "id": "GT-11",
+      "kind": "control",
+      "table": "users",
+      "why": "Healthy: unique email index and country index both used."
+    },
+    {
+      "id": "GT-12",
+      "kind": "control",
+      "table": "sessions",
+      "why": "Healthy: token unique index and user_id index both used."
+    },
+    {
+      "id": "GT-13",
+      "kind": "control",
+      "table": "api_keys",
+      "why": "Healthy: small table; unique index has zero scans but enforces uniqueness."
+    },
+    {
+      "id": "GT-14",
+      "kind": "positive",
+      "table": "products",
+      "action": "drop_index",
+      "index_any_of": ["idx_products_category"],
+      "why": "Small (<10MB) unused index no catalog query touches. Small enough that the heuristic baseline only reports it inside an unnamed aggregate item, which cannot be acted on."
+    }
+  ]
+}

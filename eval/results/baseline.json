@@ -1,0 +1,103 @@
+{
+  "tool": "baseline-heuristics",
+  "generated_at": "2026-08-29T19:02:50.577Z",
+  "recommendations": [
+    {
+      "action": "drop_index",
+      "table": "invoices",
+      "index_candidates": [
+        "idx_invoices_unpaid_due"
+      ],
+      "severity": "critical",
+      "reason": "Zero scans on table \"invoices\". Reclaim 31 MB."
+    },
+    {
+      "action": "drop_index",
+      "table": "products",
+      "index_candidates": [
+        "idx_products_price"
+      ],
+      "severity": "critical",
+      "reason": "Zero scans on table \"products\". Reclaim 20 MB."
+    },
+    {
+      "action": "drop_index",
+      "table": "order_items",
+      "index_candidates": [
+        "idx_order_items_order_id"
+      ],
+      "severity": "critical",
+      "reason": "Zero scans on table \"order_items\". Reclaim 17 MB."
+    },
+    {
+      "action": "drop_index",
+      "table": "events",
+      "index_candidates": [
+        "idx_events_type"
+      ],
+      "severity": "critical",
+      "reason": "Zero scans on table \"events\". Reclaim 12 MB."
+    },
+    {
+      "action": "drop_index",
+      "table": "events",
+      "index_candidates": [
+        "idx_events_source"
+      ],
+      "severity": "critical",
+      "reason": "Zero scans on table \"events\". Reclaim 12 MB."
+    },
+    {
+      "action": "drop_index",
+      "table": "",
+      "severity": "warning",
+      "reason": "1 small unused indexes (aggregate item — no specific index named). Tables: products"
+    },
+    {
+      "action": "drop_index",
+      "table": "order_items",
+      "index_candidates": [
+        "idx_order_items_order_id",
+        "idx_order_items_order"
+      ],
+      "severity": "critical",
+      "reason": "Duplicate indexes on (order_id) — drop all but one."
+    },
+    {
+      "action": "reindex",
+      "table": "messages",
+      "index_candidates": [
+        "messages_pkey"
+      ],
+      "severity": "warning",
+      "reason": "107.2% bloated, reclaim ~10224 kB."
+    },
+    {
+      "action": "reindex",
+      "table": "messages",
+      "index_candidates": [
+        "idx_messages_sender"
+      ],
+      "severity": "warning",
+      "reason": "56.1% bloated, reclaim ~5352 kB."
+    },
+    {
+      "action": "vacuum",
+      "table": "audit_logs",
+      "severity": "critical",
+      "reason": "41.18% dead rows (280000)."
+    },
+    {
+      "action": "add_index",
+      "table": "orders",
+      "severity": "warning",
+      "reason": "300000 rows, 2196 seq scans. Check slow query logs to identify which columns to index."
+    },
+    {
+      "action": "add_index",
+      "table": "page_views",
+      "severity": "warning",
+      "reason": "200000 rows, 1702 seq scans. Check slow query logs to identify which columns to index."
+    }
+  ]
+}

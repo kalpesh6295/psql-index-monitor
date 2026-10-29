@@ -1,0 +1,32 @@
+# Proves the reproduction path from a clean environment on every push:
+# sandbox up, seeded, workload run, baseline scored against ground truth.
+# (The agent step needs an API key and ~$5, so CI covers everything up to it.)
+name: eval-sandbox
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  baseline-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The eval sandbox this workflow itself creates — explicit, not a default.
+      SANDBOX_DATABASE_URL: postgres://postgres:postgres@localhost:5499/indexdoctor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Build and seed sandbox (~4 min)
+        run: bash eval/sandbox/setup.sh
+      - name: Baseline + score against ground truth
+        run: |
+          npx tsx eval/baseline/run.ts
+          npx tsx eval/score.ts eval/results/baseline.json | tee score.txt
+          grep -q "correct_decisions: 10/14" score.txt || (echo "baseline score drifted from documented 10/14" && exit 1)
+      - name: Typecheck
+        run: npm run typecheck

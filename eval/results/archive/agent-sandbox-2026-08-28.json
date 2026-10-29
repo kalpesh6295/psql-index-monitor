@@ -1,0 +1,325 @@
+{
+  "tool": "index-doctor-agent",
+  "model": "claude-opus-5",
+  "generated_at": "2026-08-28T17:45:00.000Z",
+  "note": "Reconstructed from the run trajectories in eval/trajectories/2026-08-28T17-27-44-248Z (the original file was overwritten by a later local run). Verdicts are verbatim from the logged verdict_submitted entries; usage totals are from the run console output.",
+  "usage": {
+    "input": 741743,
+    "output": 66904,
+    "cacheRead": 0,
+    "estimated_cost_usd": 5.38
+  },
+  "recommendations": [
+    {
+      "action": "add_index",
+      "table": "events",
+      "columns": [
+        "user_id",
+        "created_at"
+      ],
+      "ddl": "CREATE INDEX CONCURRENTLY idx_events_user_id_created_at ON public.events (user_id, created_at);",
+      "rollback": "DROP INDEX CONCURRENTLY idx_events_user_id_created_at;",
+      "severity": "critical",
+      "reason": "Low risk. Adds a ~60MB btree to a 193MB/2M-row table and a small write-amplification cost on INSERT into events; the table shows n_dead_tup=0 and is append-oriented, so maintenance overhead is minimal. Use CREATE INDEX CONCURRENTLY to avoid an ACCESS EXCLUSIVE lock on a hot table; note CONCURRENTLY cannot run inside a transaction block and may leave an INVALID index if it fails, in which case drop and retry. Chose ASC over DESC because the planner reached identical cost via a backward scan, and skipped the INCLUDE variant because it showed no cost benefit. Follow-up (separate candidate, do NOT bundle): after this index is live, idx_events_created_at (59MB) has no remaining consumer — no app-catalog query filters or orders events by created_at alone — so it becomes a drop candidate, but that should be verified independently before removal.",
+      "evidence": [
+        "pg_stat_statements confirms the target query is the #1 statement by total time: 'SELECT type, source, created_at FROM events WHERE user_id=$1 AND created_at > now()-interval $2 ORDER BY created_at DESC LIMIT $3' — 400 calls, 52.68ms mean, 21,071ms total, 465 rows returned total (~1.16 rows/call).",
+        "Index inventory on events shows NO index leading with user_id: events_pkey(id), idx_events_type(type), idx_events_source(source), idx_events_created_at(created_at). user_id is unindexed, so it can only be applied as a post-scan filter.",
+        "Current plan (explain_query) is a Parallel Bitmap Heap Scan: 'Bitmap Index Scan on idx_events_created_at (cost=0.00..5167.51 rows=229744)' with 'Filter: (user_id = $1)' applied after the fact, then a Sort — total cost 32779.16.",
+        "Tuple-read math corroborates the wrong-index diagnosis exactly: SELECT count(*) FROM events WHERE created_at > now()-interval '7 days' = 232,762 rows; 232,762 x 400 scans = 93.1M, matching idx_events_created_at's recorded idx_tup_read of 93,421,472 with idx_scan=400.",
+        "HypoPG on (user_id, created_at DESC): planner_used_it=true. Plan becomes 'Index Scan using btree_events_user_id_created_at, Index Cond: ((user_id = $1) AND (created_at > now()-'7 days'))' at cost 0.06..8.08 — a ~4,050x estimated cost reduction from 32779.16, with the Sort node eliminated (index supplies ORDER BY created_at DESC).",
+        "Tested the plain ASC variant (user_id, created_at): planner also chose it at the identical cost 0.06..8.08 via 'Index Scan Backward', so the DESC modifier buys nothing — the simpler ASC index is preferred as it also serves ascending-order access.",
+        "Tested a covering variant (user_id, created_at DESC) INCLUDE (type, source): yields an Index Only Scan but at the same estimated cost 0.06..8.08, so the extra index width is not justified.",
+        "Selectivity supports the leading column choice: pg_stats shows events.user_id n_distinct=185,818 over n_live_tup=2,000,000 (~10.8 rows/user, null_frac=0), so user_id first prunes to a handful of rows before the created_at range is applied.",
+        "events has seq_scan=0, which is why missing-index heuristics based on sequential scans never flagged this table — the pathology is an index scan reading the wrong index, not a seq scan."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "drop_index",
+      "table": "events",
+      "index_candidates": [
+        "idx_events_source"
+      ],
+      "columns": [
+        "source"
+      ],
+      "ddl": "DROP INDEX CONCURRENTLY idx_events_source;",
+      "rollback": "CREATE INDEX CONCURRENTLY idx_events_source ON public.events USING btree (source);",
+      "severity": "warning",
+      "reason": "Risk is low but non-zero: idx_scan=0 reflects one observation window, so an ad-hoc/analyst query such as 'WHERE source = ...' outside the catalog would lose its index and fall back to a seq scan over 2M rows. Mitigations: the drop is trivially reversible (rebuild takes seconds-to-minutes concurrently), no constraint or uniqueness is lost, and the app catalog — including rare cron jobs — contains no predicate on events.source. Use DROP INDEX CONCURRENTLY to avoid an ACCESS EXCLUSIVE lock on a hot 2M-row table; note CONCURRENTLY cannot run inside a transaction block and can leave an INVALID index if interrupted (re-run the drop if so). Separately (out of scope for this candidate, but the reason events is slow): the activity-feed query costs 52.68 ms mean and a hypothetical CREATE INDEX ON events (user_id, created_at DESC) is chosen by the planner, dropping estimated cost from 32778.29 to 8.08 — that index, not idx_events_source, is what events actually needs.",
+      "evidence": [
+        "inspect_index: idx_events_source = CREATE INDEX idx_events_source ON public.events USING btree (source), 12 MB, idx_scan = 0, is_unique = false, is_primary = false, partial_predicate = null, backing_constraint = null — so nothing structural (PK/UNIQUE/FK constraint/partial-predicate specialization) depends on it.",
+        "list_app_queries: the only query touching events is events_recent_by_user.sql — 'SELECT type, source, created_at FROM events WHERE user_id = $1 AND created_at > now() - interval ''7 days'' ORDER BY created_at DESC LIMIT 100'. 'source' appears solely in the SELECT list; no query in the catalog filters, joins, groups, or sorts on events.source. No rare/cron job references events.source either (dunning_job is the only rare job and it targets invoices).",
+        "get_query_stats: only two statements hit events — the activity-feed query (400 calls, 52.68 ms mean) and a one-off 'SELECT count(*) FROM events WHERE created_at > now() - interval $1'. Neither can use a btree on (source).",
+        "pg_stat_user_indexes on events: idx_events_created_at has 401 scans (matching the ~400 activity-feed calls + 1 count query), while idx_events_source and idx_events_type both sit at 0 scans. The zero is corroborated by the plan, not just by window length: table_seq_scans = 0 and the activity-feed plan uses a Bitmap Index Scan on idx_events_created_at.",
+        "explain of the activity-feed query shows the planner picking 'Bitmap Index Scan on idx_events_created_at ... Recheck Cond: created_at > ... Filter: (user_id = $1)' — source is a payload column only, never an index condition.",
+        "events has 2,000,000 rows; dropping this index removes 12 MB and one btree maintenance write per INSERT/UPDATE on the largest table in the schema."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "vacuum",
+      "table": "audit_logs",
+      "ddl": "ALTER TABLE public.audit_logs SET (autovacuum_enabled = true); VACUUM (ANALYZE) public.audit_logs;",
+      "rollback": "ALTER TABLE public.audit_logs RESET (autovacuum_enabled); -- or SET (autovacuum_enabled = false) to restore the prior override. The VACUUM itself is not reversible, but it only reclaims dead tuples and refreshes statistics; no data is altered.",
+      "severity": "warning",
+      "reason": "Plain VACUUM (not FULL) takes only SHARE UPDATE EXCLUSIVE, runs concurrently with reads/writes, and will not block the ~300 audit_by_actor.sql calls per window; it will scan ~6,356 pages (50 MB) so it finishes quickly. It reclaims the 16 MB of dead tuples as reusable free space in place — the on-disk file will likely NOT shrink; if returning space to the OS is required that needs VACUUM FULL or pg_repack (VACUUM FULL takes ACCESS EXCLUSIVE and should be scheduled in a maintenance window — not recommended here since the space will be reused by new inserts). The important half of the fix is re-enabling autovacuum: verify with someone who owns this table that autovacuum_enabled=false was not set deliberately (e.g. to avoid I/O spikes on a high-volume audit table). If it was deliberate, prefer per-table tuning (autovacuum_vacuum_scale_factor=0.05, autovacuum_vacuum_cost_delay=2ms) over leaving it off entirely, otherwise this bloat returns and the table also risks eventual wraparound-triggered emergency vacuum. ANALYZE is included but low-value here (last_analyze is recent and n_mod_since_analyze=0); it is cheap and keeps stats consistent post-vacuum.",
+      "evidence": [
+        "pg_stat_user_tables: audit_logs n_live_tup=400000, n_dead_tup=280000 (41.2% dead), vacuum_count=0, autovacuum_count=0, last_vacuum and last_autovacuum both NULL.",
+        "pgstattuple('audit_logs') independently confirms the bloat is real, not a stats artifact: table_len=52,068,352 bytes (50 MB), tuple_count=400000, tuple_percent=55.31, dead_tuple_count=237898, dead_tuple_len=17,128,656 (32.9% dead), free_percent only 6.23 — i.e. ~16 MB of the heap is dead tuples with almost no reusable free space.",
+        "Root cause identified: pg_class.reloptions for audit_logs = {autovacuum_enabled=false}. The global autovacuum setting is 'on' with threshold=50 / scale_factor=0.2 (trigger point ~80,050 dead rows, far exceeded), so the table-level override is the only reason autovacuum never ran.",
+        "No blocking xmin horizon: pg_stat_activity shows no long-running transaction (only my own session) and pg_replication_slots is empty — so a VACUUM will actually be able to remove the dead tuples.",
+        "The bloat has a real query cost: audit_by_actor.sql (SELECT ... FROM audit_logs WHERE actor_id=$1 ORDER BY created_at DESC LIMIT 100, ~300 calls/window) plans as Bitmap Index Scan on idx_audit_logs_actor -> Bitmap Heap Scan; the heap side reads pages that are 32.9% dead tuples. idx_audit_logs_actor has idx_scan=300 and is 10 MB, so it is actively used and worth cleaning."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "reindex",
+      "table": "messages",
+      "index_candidates": [
+        "messages_pkey"
+      ],
+      "ddl": "REINDEX INDEX CONCURRENTLY public.messages_pkey;",
+      "rollback": "No rollback needed: REINDEX CONCURRENTLY rebuilds in place and atomically swaps, preserving the index name, definition and PRIMARY KEY constraint. If the rebuild is cancelled or fails it leaves an invalid transient index behind; clean up with: DROP INDEX CONCURRENTLY public.messages_pkey_ccnew; (verify names first via SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid AND indrelid = 'messages'::regclass). The original index remains valid and in use throughout.",
+      "severity": "warning",
+      "reason": "REINDEX INDEX CONCURRENTLY takes only SHARE UPDATE EXCLUSIVE, so reads and writes to messages continue; it does briefly wait for existing transactions to drain, so avoid running it alongside long-running transactions or it will stall. It needs transient disk space for a second copy of the index (~4-19 MB here, trivial against a 72 MB heap). Risk is low and the payoff is modest in absolute terms (~15 MB plus fewer pages touched per insert-time uniqueness check) - this is a warning, not a critical fix, so schedule it in a maintenance window rather than treating it as urgent. Key judgement: idx_scan = 0 would normally argue for DROP rather than REINDEX, but this index backs a PRIMARY KEY constraint and enforces uniqueness on insert, so dropping it is not an option; rebuilding is the correct action. Note the sibling idx_messages_sender (15 MB for a non-unique bigint column on 180k rows) looks similarly oversized and is worth a separate bloat check.",
+      "evidence": [
+        "pgstatindex('messages_pkey'): avg_leaf_density = 18.25% (healthy freshly-built btree ~90%), index_size = 20,234,240 bytes, leaf_pages = 2459, tree_level = 2",
+        "Ideal-size math: 180,000 live rows x ~20 bytes/entry (bigint key + line pointer) at 90% fill = ~500 leaf pages ~= 4 MB, vs 2459 pages / 19 MB actual -> ~4-5x oversized, ~15 MB reclaimable. Independently corroborates the triage estimator.",
+        "leaf_fragmentation = 0, deleted_pages = 0, empty_pages = 0: pages are sparsely filled, not awaiting cleanup, so VACUUM cannot reclaim this space - only a rebuild can.",
+        "pg_stat_user_tables: messages has n_dead_tup = 0, n_tup_upd = 0, n_tup_del = 0, autovacuum_count = 0 - bloat is not from ongoing dead-tuple churn, so it will not immediately regrow after rebuild.",
+        "inspect_index: is_unique = true, is_primary = true, backing_constraint = messages_pkey, constraint_type = 'p' -> pg_constraint confirms PRIMARY KEY (id). Cannot be dropped without dropping the PK constraint, so drop is not an alternative despite idx_scan = 0.",
+        "list_app_queries: no query filters messages by id (messages_by_thread uses thread_id, messages_by_sender uses sender_id). idx_scan = 0 is expected for a surrogate PK - insert-time unique checks do not increment idx_scan - while the sibling indexes idx_messages_thread and idx_messages_sender show 800 and 600 scans.",
+        "SHOW server_version = 16.15, so REINDEX INDEX CONCURRENTLY is supported on a primary key index (PG12+)."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "reindex",
+      "table": "messages",
+      "index_candidates": [
+        "idx_messages_sender"
+      ],
+      "ddl": "REINDEX INDEX CONCURRENTLY idx_messages_sender;",
+      "rollback": "No rollback needed — REINDEX CONCURRENTLY rebuilds in place and preserves the index name, definition, and query plans; it does not change schema semantics. If the rebuild is interrupted it can leave an invalid transient index: check with SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid AND indrelid = 'messages'::regclass; and clean up with DROP INDEX CONCURRENTLY idx_messages_sender_ccnew; The original index remains valid and usable throughout. To recreate from scratch if ever needed: CREATE INDEX CONCURRENTLY idx_messages_sender ON public.messages USING btree (sender_id);",
+      "severity": "warning",
+      "reason": "The hypothesis is correct in direction and action; only the magnitude was understated (actual waste ~78%, not 56.1%). REINDEX CONCURRENTLY is the right tool: it takes no long-lived exclusive lock, so the moderation query keeps using the existing index while the replacement is built. Costs to accept: it does two table scans and briefly needs disk for both the old and new index (~19 MB peak, trivial here), it takes a SHARE UPDATE EXCLUSIVE lock that will block/be blocked by concurrent VACUUM or DDL on messages, and it waits on long-running transactions before it can finish — so run it outside heavy batch windows. If it fails midway it leaves an invalid *_ccnew index that must be dropped (see rollback) and the original stays intact, so worst case is a no-op plus cleanup. Honest scoping note: the absolute payoff is modest — ~11 MB reclaimed and slightly better cache density on an index that already resolves in cost 12.45 — so this is housekeeping, not a latency emergency; severity is warning because 22% leaf density on an actively scanned index is pathological and will keep degrading, not because users are hurting today. Separately, and deliberately NOT recommended here as it is outside this candidate's scope: the plan shows a Sort on created_at DESC above the index scan, so a future (sender_id, created_at DESC) index could eliminate that sort — that should be evaluated as its own add_index candidate with hypothetical-index evidence, not smuggled into a reindex. Do not drop this index: it backs a real ~600 calls/window query.",
+      "evidence": [
+        "pgstatindex('idx_messages_sender') measures avg_leaf_density = 22.21% — i.e. ~78% of leaf space is wasted, far worse than the triage estimate of 56.1% bloat. Threshold for concern is ~60%.",
+        "leaf_fragmentation = 49.49%: nearly half the leaf pages are out of physical order, degrading sequential/range access on top of the space waste.",
+        "Physical layout: 1,853 leaf pages + 7 internal pages = 15,245,312 bytes (15 MB). At a normal ~90% packing, 180,000 bigint entries need roughly 457 leaf pages (~3.6 MB), so a rebuild should reclaim on the order of 11 MB.",
+        "Index is genuinely in use, not a drop candidate: inspect_index reports idx_scan = 600 with table_seq_scans = 0.",
+        "Usage is explained by a real app query, not an accident: messages_by_sender.sql ('Moderation tool: all messages sent by a user', ~600 calls/window) filters WHERE sender_id = $1 — matching the 600 recorded scans exactly.",
+        "EXPLAIN of that query confirms the planner picks it today: 'Index Scan using idx_messages_sender on messages (cost=0.42..12.45) Index Cond: (sender_id = $1)'.",
+        "Bloat is NOT dead-tuple bloat, so VACUUM is the wrong remedy: pg_stat_user_tables shows n_dead_tup = 0, n_tup_upd = 0, n_tup_del = 0. The wasted space is page-split/fragmentation bloat in the index itself, which only a rebuild reclaims.",
+        "messages has no custom autovacuum tuning (pg_class.reloptions IS NULL); table heap is 72 MB / 9,279 pages, so the index bloat is an index-local problem."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "reindex",
+      "table": "messages",
+      "index_candidates": [
+        "idx_messages_thread"
+      ],
+      "ddl": "REINDEX INDEX CONCURRENTLY idx_messages_thread;",
+      "rollback": "No rollback is needed — REINDEX CONCURRENTLY rebuilds the same index definition and does not change query semantics. If the operation is interrupted it can leave an invalid index named idx_messages_thread_ccnew; clean up with: DROP INDEX CONCURRENTLY IF EXISTS idx_messages_thread_ccnew; then re-run. To recreate from scratch if ever lost: CREATE INDEX CONCURRENTLY idx_messages_thread ON public.messages USING btree (thread_id);",
+      "severity": "warning",
+      "reason": "Bloat is confirmed by direct measurement (25.74% leaf density), not by the unreliable estimator, and the index is confirmed in active use by a hot path, so REINDEX (not DROP) is the correct action. REINDEX CONCURRENTLY takes only a SHARE UPDATE EXCLUSIVE lock, so reads and writes to messages continue; it does take a brief ACCESS EXCLUSIVE lock at the swap step, so run it off-peak and set a short lock_timeout to avoid queueing behind long transactions. It needs transient disk space for a second copy (~9 MB here — negligible) and will not proceed cleanly if a long-running transaction holds the table. If interrupted, an invalid *_ccnew index may remain and must be dropped before retrying. Absolute payoff is modest (~6.5 MB reclaimed on a 9 MB index that likely already fits in cache), which is why this is a warning rather than critical. Separately noted for triage, not confirmed here: the inbox query still performs a Sort on created_at after the bitmap scan, so a composite index on (thread_id, created_at) would eliminate that sort and satisfy the LIMIT 50 directly — that is a distinct add_index candidate and should be evaluated on its own evidence rather than bundled into this rebuild.",
+      "evidence": [
+        "pgstatindex('idx_messages_thread'): avg_leaf_density = 25.74%, well below the ~60% bloat threshold and roughly a third of a freshly built btree (~90%).",
+        "pgstatindex: leaf_fragmentation = 49.78%, indicating leaf pages are substantially out of physical order.",
+        "pgstatindex: leaf_pages = 1145, index_size = 9,437,184 bytes (9216 kB), tree_level = 2, empty_pages = 0, deleted_pages = 0. At healthy density the same entries fit in ~330 leaf pages (~2.6 MB), so ~6.5 MB is reclaimable.",
+        "inspect_index: idx_scan = 800 — the index is actively used, so dropping it instead of rebuilding would be incorrect.",
+        "App catalog messages_by_thread.sql ('Inbox: messages in a thread. ~800 calls/window') WHERE thread_id = $1 matches the index columns and the 800 scan count exactly.",
+        "EXPLAIN of the inbox query shows 'Bitmap Index Scan on idx_messages_thread (cost=0.00..4.45 rows=4)' with 'Index Cond: (thread_id = $1)' — planner chooses this index today.",
+        "pg_stat_user_tables for messages: n_dead_tup = 0, n_live_tup = 180000 — no dead-row problem, so VACUUM would not reclaim this space; the bloat is sparse leaf pages requiring a rebuild.",
+        "inspect_index: is_unique = false, is_primary = false, backing_constraint = null, partial_predicate = null — a plain non-constraint index, safe to rebuild concurrently."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "reindex",
+      "table": "users",
+      "index_candidates": [
+        "users_email_key"
+      ],
+      "ddl": "REINDEX INDEX CONCURRENTLY public.users_email_key;",
+      "rollback": "No rollback needed — REINDEX rebuilds the same index definition (CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)). If the concurrent rebuild fails it leaves an invalid _ccnew index: DROP INDEX CONCURRENTLY public.users_email_key_ccnew; the original index remains valid and in use.",
+      "severity": "info",
+      "reason": "Benefit is real but modest in absolute terms: expected shrink from 14 MB to ~8 MB (~6 MB reclaimed, ~700 fewer leaf pages). Tree depth stays at 2, so per-lookup cost will not change materially; the win is cache footprint and I/O on a 2000-calls/window login path, hence severity 'info' rather than 'warning'. REINDEX CONCURRENTLY is online (no long write lock) but takes ACCESS EXCLUSIVE briefly at the start/end for catalog swaps, doubles the index's disk usage during the rebuild (~14 MB extra, trivial here), and can fail if a long-running transaction blocks it — a failure leaves an INVALID users_email_key_ccnew that must be dropped concurrently while the original keeps serving traffic. Caveat on durability: with zero UPDATEs/DELETEs, the 51.75% density comes from random-order (non-sequential) email inserts causing 50/50 page splits, so density will drift back toward ~50-70% as new users sign up — this is maintenance, not a permanent fix, and should not be scheduled to repeat frequently. Do not substitute VACUUM: there are no dead tuples to reclaim. Adjacent observation outside this candidate's scope: users_pkey shows 0 scans in the window — worth its own investigation, but a primary key index must not be dropped on scan count alone.",
+      "evidence": [
+        "pgstatindex('users_email_key'): avg_leaf_density = 51.75% (well below the ~60% bloat threshold), leaf_fragmentation = 10.33%, leaf_pages = 1723, index_size = 14,229,504 bytes, tree_level = 2, empty_pages = 0, deleted_pages = 0.",
+        "Size vs. live data: 200,000 rows with avg email of 22.44 bytes (pg_column_size) => ~36 bytes/entry incl. IndexTuple header + line pointer => ~7.2 MB at full packing, ~8 MB at 90% fill (~1,000 leaf pages). Actual 14 MB / 1,723 leaf pages = ~40-43% wasted space.",
+        "Index is hot, not a drop candidate: inspect_index reports idx_scan = 2000; pg_stat_user_indexes confirms users_email_key = 2000 scans (highest on the table; users_pkey = 0, idx_users_country = 300).",
+        "App catalog match: user_by_email.sql ('Login flow: look up user by email', ~2000 calls/window). EXPLAIN of `SELECT id, email, country, plan FROM users WHERE email = $1` yields `Index Scan using users_email_key on users (cost=0.42..8.44 rows=1 width=38)` — the index serves the login path directly.",
+        "Bloat is from page splits, not dead tuples: pg_stat_user_tables shows n_dead_tup = 0, n_tup_upd = 0, n_tup_del = 0, vacuum_count = 0, autovacuum_count = 0. VACUUM would reclaim nothing here (deleted_pages = 0), so REINDEX — not VACUUM — is the correct remedy.",
+        "Uniqueness is index-only, not constraint-backed: pg_constraint has 0 rows with conindid = 'users_email_key'::regclass, and inspect_index shows backing_constraint = null — so REINDEX CONCURRENTLY is permitted (constraint-backed indexes are the case that would need extra care)."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "add_index",
+      "table": "orders",
+      "columns": [
+        "user_id",
+        "created_at DESC"
+      ],
+      "ddl": "CREATE INDEX CONCURRENTLY idx_orders_user_id_created_at ON public.orders (user_id, created_at DESC);",
+      "rollback": "DROP INDEX CONCURRENTLY public.idx_orders_user_id_created_at;",
+      "severity": "critical",
+      "reason": "Write overhead: one extra btree on a 300k-row table (~10-15 MB), touched by every order INSERT/UPDATE of user_id or created_at — negligible versus eliminating ~2200 full scans reading 360M tuples. Because user_id is near-unique (~2.4 rows/user), a single-column (user_id) index tested at the identical cost (11.93) in the generic plan; the trailing created_at DESC column is retained because it lets the LIMIT 20 be satisfied in index order for high-volume users without a sort, at essentially no extra size. Build with CONCURRENTLY to avoid taking an ACCESS EXCLUSIVE lock on orders; if the build fails it leaves an INVALID index that must be dropped and retried.",
+      "evidence": [
+        "pg_indexes on orders shows only orders_pkey (id) and idx_orders_created_at (created_at) — user_id has no index of any kind (not even as a leading column)",
+        "pg_stat_user_tables: orders n_live_tup=300000, seq_scan=2196, seq_tup_read=360,000,000 (~164k tuples per scan), idx_scan=300",
+        "EXPLAIN of the app query orders_by_user.sql (SELECT id, status, total_cents, created_at FROM orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20) plans 'Parallel Seq Scan on orders  Filter: (user_id = $1)' with total cost 5706.02",
+        "HypoPG with CREATE INDEX ON orders (user_id, created_at DESC): planner_used_it=true; plan becomes 'Bitmap Index Scan on btree_orders_user_id_created_at  Index Cond: (user_id = $1)' at total cost 11.93 — ~478x estimated cost reduction",
+        "pg_stat_statements: this exact statement has 1200 calls, mean 7.97 ms, 9567 ms total — the 3rd largest total_time consumer and the only orders workload doing per-user filtering",
+        "pg_stats: orders.user_id n_distinct=-0.4184 (~125k distinct users, ~2.4 rows/user), so the index is highly selective and small per key",
+        "The other orders query (orders_recent.sql: ORDER BY created_at DESC LIMIT 50, 0.07 ms mean) is already served by idx_orders_created_at, which is unaffected by this addition"
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "drop_index",
+      "table": "order_items",
+      "index_candidates": [
+        "idx_order_items_order_id"
+      ],
+      "ddl": "DROP INDEX CONCURRENTLY IF EXISTS public.idx_order_items_order_id;",
+      "rollback": "CREATE INDEX CONCURRENTLY idx_order_items_order_id ON public.order_items USING btree (order_id);",
+      "severity": "warning",
+      "reason": "Low risk. The two indexes are provably interchangeable (identical column, opclass, collation, ordering, no predicate), so any plan that could use the dropped index can use idx_order_items_order at identical cost — confirmed by EXPLAIN already selecting the survivor. Neither backs a constraint and there is no FK on order_items, so no constraint enforcement or referential-integrity path is affected. The 0-scan count alone would be weak evidence, but it is corroborated by the full app catalog containing only one order_items query, which the retained index serves. Residual risk: dropping an index is not instantaneous to rebuild (17 MB), so if an unforeseen consumer existed, recovery requires the rollback CREATE INDEX CONCURRENTLY. DROP INDEX CONCURRENTLY avoids taking an ACCESS EXCLUSIVE lock; it must run outside a transaction block and will wait on long-running transactions touching the table. Benefit: reclaims 17 MB and removes a redundant write/VACUUM maintenance target on every order_items INSERT/UPDATE/DELETE.",
+      "evidence": [
+        "inspect_index: both definitions are byte-identical apart from the name — 'CREATE INDEX idx_order_items_order_id ON public.order_items USING btree (order_id)' vs 'CREATE INDEX idx_order_items_order ON public.order_items USING btree (order_id)'; both 17 MB on a 900,000-row table.",
+        "pg_index catalog comparison proves true redundancy, not just similar DDL: both rows have indkey='2' (same single column), indclass='3124' (identical int8_ops opclass), indcollation='0', indoption='0' (same ASC/NULLS ordering), indpred=NULL and indexprs=NULL (neither is partial or expression-based), amname='btree', indisvalid=true, indisready=true.",
+        "Neither index is unique or constraint-backed: indisunique=false, indisexclusion=false, backing_constraint=null for both. pg_constraint on order_items returns exactly one constraint — order_items_pkey PRIMARY KEY (id) — which is backed by the separate order_items_pkey index (indkey='1'), and there is NO foreign key on or referencing order_items, so no FK enforcement depends on either order_id index.",
+        "Usage is asymmetric: idx_order_items_order has idx_scan=1500, idx_order_items_order_id has idx_scan=0. The planner has consistently chosen one copy and never the other.",
+        "list_app_queries: order_items appears in exactly one query in the whole catalog — order_items_by_order.sql 'SELECT product_id, qty FROM order_items WHERE order_id = $1' (~1500 calls/window). No rare/cron job (e.g. dunning_job.sql) touches order_items, so there is no hidden low-frequency consumer of the second copy.",
+        "EXPLAIN of the only order_items query confirms the survivor serves it: 'Bitmap Index Scan on idx_order_items_order (cost=0.00..4.46 rows=4 width=0)' under 'Bitmap Heap Scan on order_items (cost=4.46..20.21 rows=4)'. The retained index alone fully covers the access path.",
+        "pg_stat_statements shows that query at 1500 calls, mean 0.24 ms, total 362 ms — already fast via the retained index, so removing the duplicate cannot regress it."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "drop_index",
+      "table": "products",
+      "index_candidates": [
+        "idx_products_price"
+      ],
+      "ddl": "DROP INDEX CONCURRENTLY IF EXISTS idx_products_price;",
+      "rollback": "CREATE INDEX CONCURRENTLY idx_products_price ON public.products USING btree (price_cents);",
+      "severity": "warning",
+      "reason": "Caveat checked but not fatal: pg_stat_database.stats_reset is only 36 minutes old, so idx_scan=0 is weak evidence on its own. The drop rests instead on the app query catalog containing no price_cents predicate anywhere, and that catalog provably lists rare zero-call cron jobs. Residual risk is an ad-hoc/BI query outside both sources doing a price range scan or ORDER BY price_cents (e.g. a merchandising 'products under $X' filter); it would fall back to a seq scan over 800k rows. Acceptable because recovery is one CREATE INDEX CONCURRENTLY. Benefit: reclaims 20 MB and removes btree maintenance on every INSERT/UPDATE touching price_cents — price updates are exactly the write pattern this table sees. Use DROP INDEX CONCURRENTLY to avoid an ACCESS EXCLUSIVE lock; it cannot run inside a transaction block and will wait on long-running transactions. Separate note for triage: idx_products_category (5080 kB, 0 scans) is likewise unmatched by any catalog query and is a likely next candidate, out of scope here.",
+      "evidence": [
+        "inspect_index: idx_products_price = 'CREATE INDEX idx_products_price ON public.products USING btree (price_cents)', 20 MB, idx_scan=0, is_unique=false, is_primary=false, partial_predicate=null, backing_constraint=null — so it enforces no constraint and has no partial predicate that a rare query could depend on.",
+        "pg_constraint on products returns only products_pkey PRIMARY KEY (id); no foreign key on either side references products, so nothing depends on this index for constraint enforcement or FK lookup.",
+        "list_app_queries (full catalog, incl. rare cron jobs): only two products queries exist — product_by_sku (WHERE sku = $1) and products_by_ids (WHERE id = ANY($1)). price_cents appears only in SELECT output lists, never in a WHERE, ORDER BY, or GROUP BY in ANY catalog query.",
+        "The catalog demonstrably includes rare out-of-window jobs (dunning_job.sql is annotated 'runs rarely — will often show ZERO calls in a short stats window'), so its silence on price_cents is meaningful negative evidence, not just a gap.",
+        "get_query_stats (20 statements): no statement filters or sorts on price_cents. The two products statements are product_by_sku (800 calls, 0.25 ms mean) and products_by_ids (400 calls, 0.26 ms mean) — both already sub-millisecond.",
+        "EXPLAIN of product_by_sku: 'Index Scan using products_sku_key on products (cost=0.42..8.44 rows=1)'. EXPLAIN of products_by_ids: 'Index Scan using products_pkey on products (cost=0.42..48.43 rows=10)'. Both are served by unique indexes that remain after the drop, so neither regresses.",
+        "pg_stat_user_indexes for products: products_pkey 1200 scans (17 MB), products_sku_key 800 scans (24 MB), idx_products_category 0 scans (5080 kB), idx_products_price 0 scans (20 MB). All read traffic is absorbed by the two unique indexes.",
+        "pg_stat_user_tables: products has 800,000 rows and table_seq_scans=0, confirming no unindexed access path is silently compensating for this index."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "drop_index",
+      "table": "products",
+      "index_candidates": [
+        "idx_products_category"
+      ],
+      "ddl": "DROP INDEX CONCURRENTLY IF EXISTS public.idx_products_category;",
+      "rollback": "CREATE INDEX CONCURRENTLY idx_products_category ON public.products USING btree (category);",
+      "severity": "info",
+      "reason": "Risk: an uncatalogued ad-hoc/admin query filtering on category would fall back to a seq scan of 800k rows; that is bounded (small table, products currently has 0 seq scans) and the planner's own estimate shows the index only saves a low-selectivity 12.5% scan. The index backs no constraint, unique or FK, so dropping cannot break writes or referential integrity. DROP INDEX CONCURRENTLY avoids a long-lived exclusive lock, and the index can be recreated concurrently within minutes. Benefit: 5 MB reclaimed and less write amplification on every products INSERT/UPDATE.",
+      "evidence": [
+        "inspect_index: idx_products_category = CREATE INDEX ... USING btree (category), 5080 kB, idx_scan = 0, is_unique = false, is_primary = false, backing_constraint = null, partial_predicate = null — it backs no constraint and enforces nothing.",
+        "list_app_queries: none of the 17 catalogued queries (including the rare monthly dunning cron job) reference products.category in a WHERE, JOIN or ORDER BY clause. The only products queries are product_by_sku.sql (WHERE sku = $1, category appears only in the SELECT list) and products_by_ids.sql (WHERE id = ANY($1)) — served by products_sku_key and products_pkey.",
+        "pg_stat_statements over the full window (stats_reset 2026-08-28T16:54:31Z) shows only those same two products statements (800 and 400 calls, 0.25/0.26 ms mean); no statement filters on category.",
+        "pg_stat_user_indexes on products: products_pkey idx_scan=1200, products_sku_key idx_scan=800, idx_products_category idx_scan=0 — the sibling indexes accumulated scans in the same window, so the zero is a real absence of use, not a reset artifact.",
+        "pg_stats: products.category has n_distinct = 8 over 800,000 table_rows (MCVs home/beauty/sports/toys/grocery/apparel/auto/electronics); EXPLAIN of WHERE category = $1 estimates 100,000 rows (12.5% of the table) at cost 9917 — even a future category filter gets marginal benefit."
+      ],
+      "confidence": "high"
+    },
+    {
+      "action": "drop_index",
+      "table": "events",
+      "index_candidates": [
+        "idx_events_type"
+      ],
+      "columns": [
+        "type"
+      ],
+      "ddl": "DROP INDEX CONCURRENTLY IF EXISTS public.idx_events_type;",
+      "rollback": "CREATE INDEX CONCURRENTLY idx_events_type ON public.events USING btree (type);",
+      "severity": "warning",
+      "reason": "Main risk is an ad-hoc/BI consumer outside the application catalog filtering on events.type; the pg_stat_statements window is only ~36 minutes, so zero scans alone would be weak evidence. That risk is mitigated by the full app query catalog (which explicitly includes rare cron jobs) containing no predicate on type, and by the column's very low cardinality (8 distinct values / ~250k rows each) meaning even an ad-hoc filter would likely take a bitmap or parallel seq scan with modest loss. Drop is fully reversible via CREATE INDEX CONCURRENTLY (~12 MB rebuild). Use DROP INDEX CONCURRENTLY to avoid an ACCESS EXCLUSIVE lock on a 193 MB hot table. Note: idx_events_source (12 MB, 0 scans, 5 distinct values) is in exactly the same situation and should be evaluated as a separate candidate.",
+      "evidence": [
+        "inspect_index: idx_events_type = CREATE INDEX idx_events_type ON public.events USING btree (type); 12 MB, idx_scan=0, idx_tup_read=0, is_unique=false, is_primary=false, partial_predicate=null, backing_constraint=null — it is a plain secondary index enforcing nothing.",
+        "list_app_queries: the only events statement in the entire application catalog is events_recent_by_user.sql — SELECT type, source, created_at FROM events WHERE user_id=$1 AND created_at > now()-interval '7 days' ORDER BY created_at DESC LIMIT 100. 'type' appears only in the SELECT projection; no query in the catalog (including the rare monthly cron job dunning_job.sql) filters, joins, groups or orders by events.type.",
+        "pg_stat_statements: the only events entries are the activity-feed query (400 calls) and a one-off 'SELECT count(*) FROM events WHERE created_at > ...' — neither references type in a WHERE clause.",
+        "pg_stat_user_indexes on events: idx_events_created_at has idx_scan=401 (it serves the activity feed), while idx_events_type and idx_events_source both sit at idx_scan=0 / idx_tup_read=0.",
+        "pg_stats: events.type has n_distinct=8 over 2,000,000 rows (~250k rows per value, MCVs login/signup/logout/error/page_view/click/share/purchase). EXPLAIN of a hypothetical 'WHERE type=''purchase''' estimates 244,533 rows via bitmap index scan — a low-selectivity column that is a poor standalone btree candidate even if such a query were introduced.",
+        "Table has 2,000,000 rows and table_seq_scans=0, so the index provides no fallback protection against seq scans either; its only cost is 12 MB plus per-INSERT maintenance, which compounds if C1's composite (user_id, created_at) index is added."
+      ],
+      "confidence": "high"
+    }
+  ],
+  "cleared": [
+    {
+      "action": "no_action",
+      "table": "events",
+      "index": "idx_events_created_at",
+      "evidence": [
+        "pgstatindex('idx_events_created_at') reports avg_leaf_density = 66%, above the ~60% bloat threshold; leaf_pages=7468, internal_pages=23, empty_pages=0, deleted_pages=0, tree_level=2 — no reclaimable dead space.",
+        "pg_stat_user_tables for events: n_tup_upd=0, n_tup_del=0, n_dead_tup=0, n_live_tup=2000000, last_vacuum/last_autovacuum NULL — an append-only table with zero churn, so no bloat mechanism exists. The ~31 bytes/entry is ordinary btree overhead on a near-unique timestamp key, not bloat.",
+        "inspect_index: 59 MB, idx_scan=401, is_unique=false, no partial predicate, no backing constraint; events table_seq_scans=0 — the index is genuinely in use, so a bloated-and-unused 'drop instead' path does not apply either.",
+        "The index IS being used inefficiently, which is a separate finding: EXPLAIN of the top query (events_recent_by_user, 400 calls, mean 52.68 ms, total 21071 ms) shows 'Bitmap Index Scan on idx_events_created_at (cost=0.00..5166.80 rows=229649)' feeding a Parallel Bitmap Heap Scan with 'Filter: (user_id = $1)', total cost 32777.66.",
+        "test_hypothetical_index with CREATE INDEX ON events (user_id, created_at DESC): planner_used_it=true, plan collapses to 'Index Scan using btree_events_user_id_created_at (cost=0.06..8.08)' with Index Cond ((user_id = $1) AND (created_at > now() - interval)) — cost 32777.66 -> 8.08. The fix for this table is C1's composite index, not a rebuild of idx_events_created_at.",
+        "list_app_queries contains exactly one events query (events_recent_by_user.sql, filtering user_id + created_at). No catalogued query — including cron/monthly jobs — filters or orders on created_at alone; the only such statement in pg_stat_statements is a single-call ad-hoc 'SELECT count(*) FROM events WHERE created_at > now() - interval $1'."
+      ],
+      "reason": "Rejected because the exact bloat measurement refutes the hypothesis: 66% leaf density on a zero-churn append-only table is healthy packing, not bloat. Running REINDEX INDEX CONCURRENTLY anyway would be low-risk but wasteful — it would hold an extra ~59 MB of disk during the rebuild, burn I/O on a 2M-row index, and deliver at most ~15-20 MB with no latency improvement for the 21 s/window activity-feed query. The reported leaf_fragmentation of 49.77% is logical-vs-physical leaf page ordering, which is irrelevant to the bitmap and single-row index scans this index actually serves, and would re-accumulate as new rows are appended. Follow-up to track separately: all 401 scans come from the one activity-feed query, which C1's (user_id, created_at) index would take over entirely; after C1 is deployed and its scan counts confirmed, idx_events_created_at should be re-evaluated as a drop candidate. Do not pre-emptively drop it now — it is currently the only index serving that query, and dropping it before C1 exists would force a sequential scan of 2M rows."
+    },
+    {
+      "action": "no_action",
+      "table": "page_views",
+      "evidence": [
+        "pg_stats confirms site_id has n_distinct=2 with MCV {2,1} at frequencies 0.5004/0.4996 — every predicate value matches ~50% (100k) of the 200,000 live rows.",
+        "HypoPG test of 'CREATE INDEX ON page_views (site_id)' for 'SELECT count(*) FROM page_views WHERE site_id = $1': planner_used_it=false; plan is identical before and after (Parallel Seq Scan on page_views cost=0.00..2912.59 rows=58824, Finalize Aggregate total cost 4059.77).",
+        "Alternative covering index 'CREATE INDEX ON page_views (site_id, id)' also rejected by planner — same 4059.77 seq-scan plan, so even an index-only-scan variant is not cheaper.",
+        "Table is small and cheap to scan: pg_relation_size = 11 MB, 200,000 rows; the 7.12 ms mean for the site_id query (600 calls, 4.275 s total) is already close to the floor for reading 11 MB.",
+        "seq_tup_read=240,000,000 is fully explained by two full-table analytics queries each running 600 times over 200,000 rows (600*200k*2 = 240M) — it is not evidence of a missing selective index.",
+        "The larger page_views cost is the daily rollup (19.4 s total, 600 calls); HypoPG on 'CREATE INDEX ON page_views (viewed_at)' was also rejected (GroupAggregate over Seq Scan cost 28288.64 unchanged), and an expression index on date_trunc('day', viewed_at) is impossible because viewed_at is timestamptz (date_trunc is only STABLE — HypoPG errored 'functions in index expression must be marked IMMUTABLE')."
+      ],
+      "reason": "Rejected: an index on a 2-value, 50/50 column cannot beat a sequential scan on an 11 MB table, and the planner demonstrably refuses both the single-column and covering variants. Creating it would add write overhead and vacuum work for zero read benefit, and it would then appear as a permanently unused index. If the dashboard latency matters, the fix is not an index: cache/materialize the aggregates (e.g. a per-site and per-day rollup table or MATERIALIZED VIEW refreshed periodically), which turns both 600-call full scans into single-row lookups. Alternatively, if a full-scan count is unavoidable, a smaller/narrower rollup table would reduce I/O."
+    },
+    {
+      "action": "no_action",
+      "table": "page_views",
+      "evidence": [
+        "pg_stat_statements: 'SELECT date_trunc($1, viewed_at), count(*) FROM page_views GROUP BY 1 ORDER BY 1' — 600 calls, mean 32.40 ms, total 19,438 ms, 54,600 rows returned; it has no WHERE clause, so every call must read all 200,000 live rows.",
+        "Current plan: GroupAggregate (cost=24288.64..28288.64) -> Sort (cost=24288.64..24788.64, Sort Key: date_trunc('day', viewed_at)) -> Seq Scan on page_views (cost=0.00..3942.00 rows=200000). The seq scan is only 3,942 of the 28,288 total cost — ~86% of the cost is the sort/aggregate over the full row set, which no index lookup can remove.",
+        "HypoPG test of CREATE INDEX ON page_views (viewed_at): planner_used_it = false; plan with the hypothetical index is byte-identical to the plan without it (same 24288.64..28288.64 GroupAggregate over a Seq Scan).",
+        "HypoPG test of an expression index CREATE INDEX ON page_views ((date_trunc('day', viewed_at))) is not even creatable: 'ERROR: hypopg: functions in index expression must be marked IMMUTABLE'. page_views.viewed_at is 'timestamp with time zone' (information_schema.columns), so date_trunc(text, timestamptz) is only STABLE — an expression index would require an IMMUTABLE wrapper function.",
+        "The second page_views statement (SELECT count(*) WHERE site_id = $1, 600 calls, 7.12 ms mean) is likewise unimprovable: HypoPG CREATE INDEX ON page_views (site_id) => planner_used_it = false, plan unchanged (Parallel Seq Scan, cost 4059.77); site_id has only 2 values so ~58,824 estimated rows per value — far past the index crossover point.",
+        "Table is small and clean: pg_stat_user_tables shows page_views at 11 MB, n_live_tup=200000, n_dead_tup=0, idx_scan=0, seq_scan=1702, seq_tup_read=240,000,000 (≈1200 full scans = exactly the 600+600 calls of the two analytics queries). No bloat or vacuum issue behind the counter.",
+        "list_app_queries contains only two page_views consumers (page_views_daily_rollup.sql and page_views_by_site.sql); no rare/cron query exists that would filter page_views by a column an index could serve."
+      ],
+      "reason": "Rejecting an index here is safe: the seq_scan/seq_tup_read alarm on page_views is fully explained by two unfiltered analytics aggregates (1200 of the 1702 seq scans), and HypoPG proves the planner ignores both candidate indexes. Adding an unused index would only add write amplification and bloat. The residual risk is that the workload is genuinely wasteful (19.4 s + 4.3 s per window recomputing the same rollup 600 times) — the correct fix is application/schema level, not indexing: materialize the daily rollup (a MATERIALIZED VIEW or incrementally-maintained page_view_daily(day, site_id, views) table refreshed on a schedule) and serve both the daily rollup and the per-site count from it. If the rollup ever gains a date range predicate (e.g. WHERE viewed_at >= $1), re-test — a btree on (viewed_at) would then become useful. Note the table is only 11 MB today; if page_views grows by orders of magnitude, re-evaluate rather than assuming this verdict still holds."
+    },
+    {
+      "action": "keep",
+      "table": "invoices",
+      "index": "idx_invoices_unpaid_due",
+      "evidence": [
+        "list_app_queries contains dunning_job.sql (monthly cron, 1st of month): SELECT id, user_id, amount_cents, due_date FROM invoices WHERE status='unpaid' AND due_date < current_date ORDER BY due_date LIMIT 500 — an exact match for the partial predicate (status='unpaid'), the leading sort/range column (due_date), and the payload columns (user_id, amount_cents).",
+        "EXPLAIN of that dunning query chooses the index: 'Limit (cost=0.43..107.68 rows=500) -> Index Scan using idx_invoices_unpaid_due on invoices (cost=0.43..62895.71 rows=293205) Index Cond: (due_date < CURRENT_DATE)'. The ORDER BY due_date is satisfied by index order, so the LIMIT 500 aborts early at cost ~107 instead of scanning/sorting.",
+        "pg_indexes on invoices shows only three indexes: invoices_pkey (id), idx_invoices_user_id (user_id), and idx_invoices_unpaid_due. No other index covers status or due_date, so dropping it leaves the dunning job with a seq scan + full sort of a 1,500,000-row table.",
+        "inspect_index: idx_scan = 0 but table_seq_scans = 0 as well — the zero count reflects a monthly job that simply did not fire inside the stats observation window, not an unused index.",
+        "Selectivity check: 600,389 of 1,500,000 rows are status='unpaid' (~40%), so the partial predicate alone is weak, but the (due_date) leading key plus LIMIT 500 is what makes the index valuable; the partial clause keeps it ~31 MB instead of covering all 1.5M rows."
+      ],
+      "reason": "Rejecting the drop. Dropping this index would silently degrade the monthly dunning job from a ~107-cost early-terminating index scan to a full sequential scan plus sort of 1.5M rows — a regression that would not surface until the 1st of the next month, well after the change window, making it hard to attribute. The only cost of keeping it is 31 MB of storage and modest write amplification on invoices inserts/updates that touch status or due_date, which is acceptable versus the risk. If storage pressure ever forces the issue, the index could be narrowed to (due_date) WHERE status='unpaid' — dropping user_id and amount_cents would shrink it while still serving the same access path, at the cost of losing the index-only-scan payload."
+    }
+  ]
+}

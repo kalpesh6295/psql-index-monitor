@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid } from 'recharts'
 import { useApi } from './hooks/useApi.js'
+import { usePrivacy, maskTable, maskIndex, maskDefinition, maskColumnList, maskSize } from './hooks/usePrivacy.js'
 import { OverviewCards } from './components/OverviewCards.js'
 import { DataTable } from './components/DataTable.js'
 import { Badge } from './components/Badge.js'
 import { Section } from './components/Section.js'
 import { ActionItems } from './components/ActionItems.js'
+import { Doctor } from './components/Doctor.js'
 import type {
   Overview,
   IndexInfo,
@@ -23,6 +25,7 @@ import type {
 const COLORS = ['#60a5fa', '#f87171', '#4ade80', '#facc15', '#a78bfa', '#fb923c', '#22d3ee', '#e879f9']
 
 const tabs = [
+  { id: 'doctor', label: 'Doctor' },
   { id: 'actions', label: 'Action Items' },
   { id: 'overview', label: 'Overview' },
   { id: 'all', label: 'All Indexes' },
@@ -44,7 +47,8 @@ function formatNum(n: number | string) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>('actions')
+  const [tab, setTab] = useState<TabId>('doctor')
+  const { privacy, toggle: togglePrivacy } = usePrivacy()
   const overview = useApi<Overview>('overview')
   const allIndexes = useApi<IndexInfo[]>('indexes')
   const unused = useApi<UnusedIndex[]>('unused')
@@ -57,107 +61,202 @@ export default function App() {
   const writeOverhead = useApi<WriteOverhead[]>('write-overhead')
   const idxRatio = useApi<IndexTableRatio[]>('index-table-ratio')
 
+  const overviewData = useMemo<Overview | null>(
+    () =>
+      privacy && overview.data
+        ? {
+            ...overview.data,
+            total_index_size: maskSize(overview.data.total_index_size),
+            total_db_size: maskSize(overview.data.total_db_size),
+            total_table_size: maskSize(overview.data.total_table_size),
+          }
+        : overview.data,
+    [overview.data, privacy],
+  )
+  const allIndexesData = useMemo<IndexInfo[] | null>(
+    () =>
+      privacy && allIndexes.data
+        ? allIndexes.data.map((i) => ({
+            ...i,
+            table_name: maskTable(i.table_name),
+            index_name: maskIndex(i.index_name),
+            definition: maskDefinition(i.definition),
+            index_size: maskSize(i.index_size),
+            table_size: maskSize(i.table_size),
+          }))
+        : allIndexes.data,
+    [allIndexes.data, privacy],
+  )
+  const unusedData = useMemo<UnusedIndex[] | null>(
+    () =>
+      privacy && unused.data
+        ? unused.data.map((i) => ({
+            ...i,
+            table_name: maskTable(i.table_name),
+            index_name: maskIndex(i.index_name),
+            definition: maskDefinition(i.definition),
+            index_size: maskSize(i.index_size),
+          }))
+        : unused.data,
+    [unused.data, privacy],
+  )
+  const mostUsedData = useMemo<MostUsedIndex[] | null>(
+    () =>
+      privacy && mostUsed.data
+        ? mostUsed.data.map((i) => ({
+            ...i,
+            table_name: maskTable(i.table_name),
+            index_name: maskIndex(i.index_name),
+            definition: maskDefinition(i.definition),
+            index_size: maskSize(i.index_size),
+          }))
+        : mostUsed.data,
+    [mostUsed.data, privacy],
+  )
+  const tableSizesData = useMemo<TableSize[] | null>(
+    () =>
+      privacy && tableSizes.data
+        ? tableSizes.data.map((t) => ({
+            ...t,
+            table_name: maskTable(t.table_name),
+            table_size: maskSize(t.table_size),
+            indexes_size: maskSize(t.indexes_size),
+            total_size: maskSize(t.total_size),
+          }))
+        : tableSizes.data,
+    [tableSizes.data, privacy],
+  )
+  const bloatData = useMemo<BloatedIndex[] | null>(
+    () =>
+      privacy && bloat.data
+        ? bloat.data.map((b) => ({
+            ...b,
+            table_name: maskTable(b.table_name),
+            index_name: maskIndex(b.index_name),
+            index_size: maskSize(b.index_size),
+            bloat_size: maskSize(b.bloat_size),
+          }))
+        : bloat.data,
+    [bloat.data, privacy],
+  )
+  const duplicatesData = useMemo<DuplicateIndex[] | null>(
+    () =>
+      privacy && duplicates.data
+        ? duplicates.data.map((d) => ({
+            ...d,
+            table_name: maskTable(d.table_name),
+            index_names: d.index_names.map((n) => maskIndex(n)),
+            index_sizes: d.index_sizes.map((s) => maskSize(s)),
+            index_columns: maskColumnList(d.index_columns),
+          }))
+        : duplicates.data,
+    [duplicates.data, privacy],
+  )
+  const seqVsIdxData = useMemo<SeqVsIdx[] | null>(
+    () =>
+      privacy && seqVsIdx.data
+        ? seqVsIdx.data.map((s) => ({ ...s, table_name: maskTable(s.table_name) }))
+        : seqVsIdx.data,
+    [seqVsIdx.data, privacy],
+  )
+  const missingData = useMemo<MissingIndex[] | null>(
+    () =>
+      privacy && missing.data
+        ? missing.data.map((m) => ({ ...m, table_name: maskTable(m.table_name) }))
+        : missing.data,
+    [missing.data, privacy],
+  )
+  const writeOverheadData = useMemo<WriteOverhead[] | null>(
+    () =>
+      privacy && writeOverhead.data
+        ? writeOverhead.data.map((w) => ({
+            ...w,
+            table_name: maskTable(w.table_name),
+            indexes_size: maskSize(w.indexes_size),
+          }))
+        : writeOverhead.data,
+    [writeOverhead.data, privacy],
+  )
+  const idxRatioData = useMemo<IndexTableRatio[] | null>(
+    () =>
+      privacy && idxRatio.data
+        ? idxRatio.data.map((r) => ({
+            ...r,
+            table_name: maskTable(r.table_name),
+            table_size: maskSize(r.table_size),
+            indexes_size: maskSize(r.indexes_size),
+          }))
+        : idxRatio.data,
+    [idxRatio.data, privacy],
+  )
+
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#141420',
-        color: '#e0e0e0',
-        fontFamily: "'Inter', system-ui, sans-serif",
-      }}
-    >
-      <header
-        style={{
-          padding: '20px 32px',
-          borderBottom: '1px solid #2a2a3a',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 16,
-        }}
-      >
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#fff' }}>Index Monitor</h1>
-        <span style={{ fontSize: 13, color: '#666' }}>PostgreSQL Index Performance Dashboard</span>
+    <div className="app">
+      <header className="app-header">
+        <div className="pulse-logo" aria-hidden>
+          <svg width="26" height="26" viewBox="0 0 26 26">
+            <polyline points="1,15 7,15 9.5,8 13,20 15.5,4 18,15 25,15" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="brand-name">
+            Index <em>Doctor</em>
+          </h1>
+          <div className="brand-sub">postgres index health, diagnosed with evidence</div>
+        </div>
+        <button
+          onClick={togglePrivacy}
+          title="Redact table, index, and column names for sharing"
+          className="btn btn-ghost"
+          style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 12, ...(privacy ? { color: 'var(--good)', borderColor: 'rgba(47,179,68,0.4)' } : {}) }}
+        >
+          {privacy ? 'Privacy: ON' : 'Privacy: OFF'}
+        </button>
       </header>
 
-      <nav
-        style={{ padding: '12px 32px', borderBottom: '1px solid #2a2a3a', display: 'flex', gap: 4, overflowX: 'auto' }}
-      >
+      <nav className="tab-nav">
         {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: 8,
-              border: 'none',
-              background: tab === t.id ? '#3b3b5a' : 'transparent',
-              color: tab === t.id ? '#fff' : '#888',
-              cursor: 'pointer',
-              fontSize: 13,
-              fontWeight: 500,
-              whiteSpace: 'nowrap',
-              transition: 'all 0.15s',
-            }}
-          >
+          <button key={t.id} onClick={() => setTab(t.id)} className={`tab${tab === t.id ? ' active' : ''}`}>
             {t.label}
-            {t.id === 'unused' && unused.data && (
-              <span
-                style={{
-                  marginLeft: 6,
-                  background: '#3b1219',
-                  color: '#f87171',
-                  padding: '1px 6px',
-                  borderRadius: 10,
-                  fontSize: 11,
-                }}
-              >
-                {unused.data.length}
-              </span>
+            {t.id === 'unused' && unusedData && unusedData.length > 0 && (
+              <span className="tab-count red">{unusedData.length}</span>
             )}
-            {t.id === 'duplicates' && duplicates.data && duplicates.data.length > 0 && (
-              <span
-                style={{
-                  marginLeft: 6,
-                  background: '#3b2f12',
-                  color: '#facc15',
-                  padding: '1px 6px',
-                  borderRadius: 10,
-                  fontSize: 11,
-                }}
-              >
-                {duplicates.data.length}
-              </span>
+            {t.id === 'duplicates' && duplicatesData && duplicatesData.length > 0 && (
+              <span className="tab-count yellow">{duplicatesData.length}</span>
             )}
           </button>
         ))}
       </nav>
 
-      <main style={{ padding: '24px 32px', maxWidth: 1600, margin: '0 auto' }}>
+      <main className="app-main">
         {tab === 'actions' && (
           <Section title="Action Items" subtitle="Prioritized recommendations based on all index metrics">
             <ActionItems
-              unused={unused.data}
-              bloat={bloat.data}
-              duplicates={duplicates.data}
-              tableSizes={tableSizes.data}
-              writeOverhead={writeOverhead.data}
-              idxRatio={idxRatio.data}
-              missing={missing.data}
-              seqVsIdx={seqVsIdx.data}
+              unused={unusedData}
+              bloat={bloatData}
+              duplicates={duplicatesData}
+              tableSizes={tableSizesData}
+              writeOverhead={writeOverheadData}
+              idxRatio={idxRatioData}
+              missing={missingData}
+              seqVsIdx={seqVsIdxData}
+              privacy={privacy}
             />
           </Section>
         )}
 
+        {tab === 'doctor' && <Doctor />}
+
         {tab === 'overview' && (
           <>
             <Section title="Database Overview" loading={overview.loading} error={overview.error}>
-              {overview.data && <OverviewCards data={overview.data} />}
+              {overviewData && <OverviewCards data={overviewData} />}
             </Section>
 
             <Section title="Top 15 Tables by Total Size" loading={tableSizes.loading} error={tableSizes.error}>
-              {tableSizes.data && (
+              {tableSizesData && (
                 <ResponsiveContainer width="100%" height={400}>
-                  <BarChart data={tableSizes.data.slice(0, 15)} margin={{ left: 20, right: 20, bottom: 60 }}>
+                  <BarChart data={tableSizesData.slice(0, 15)} margin={{ left: 20, right: 20, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                     <XAxis dataKey="table_name" angle={-45} textAnchor="end" tick={{ fontSize: 11, fill: '#888' }} />
                     <YAxis
@@ -192,11 +291,11 @@ export default function App() {
             </Section>
 
             <Section title="Index Usage Distribution" loading={allIndexes.loading} error={allIndexes.error}>
-              {allIndexes.data &&
+              {allIndexesData &&
                 (() => {
-                  const highUse = allIndexes.data.filter((i) => i.scans > 1000).length
-                  const medUse = allIndexes.data.filter((i) => i.scans > 0 && i.scans <= 1000).length
-                  const noUse = allIndexes.data.filter((i) => i.scans === 0).length
+                  const highUse = allIndexesData.filter((i) => i.scans > 1000).length
+                  const medUse = allIndexesData.filter((i) => i.scans > 0 && i.scans <= 1000).length
+                  const noUse = allIndexesData.filter((i) => i.scans === 0).length
                   const pieData = [
                     { name: 'High Use (>1000)', value: highUse },
                     { name: 'Low Use (1-1000)', value: medUse },
@@ -225,11 +324,11 @@ export default function App() {
                       </ResponsiveContainer>
                       <div style={{ fontSize: 13, color: '#888' }}>
                         <div>
-                          Total: <strong style={{ color: '#e0e0e0' }}>{allIndexes.data.length}</strong> indexes
+                          Total: <strong style={{ color: '#e0e0e0' }}>{allIndexesData.length}</strong> indexes
                         </div>
                         <div style={{ marginTop: 4 }}>
                           Unused: <strong style={{ color: '#f87171' }}>{noUse}</strong> (
-                          {allIndexes.data.length > 0 ? ((noUse / allIndexes.data.length) * 100).toFixed(1) : 0}%)
+                          {allIndexesData.length > 0 ? ((noUse / allIndexesData.length) * 100).toFixed(1) : 0}%)
                         </div>
                       </div>
                     </div>
@@ -246,9 +345,9 @@ export default function App() {
             loading={allIndexes.loading}
             error={allIndexes.error}
           >
-            {allIndexes.data && (
+            {allIndexesData && (
               <DataTable
-                data={allIndexes.data}
+                data={allIndexesData}
                 searchKeys={['table_name', 'index_name']}
                 columns={[
                   { key: 'table_name', label: 'Table' },
@@ -287,9 +386,9 @@ export default function App() {
             loading={unused.loading}
             error={unused.error}
           >
-            {unused.data && (
+            {unusedData && (
               <>
-                {unused.data.length > 0 && (
+                {unusedData.length > 0 && (
                   <div
                     style={{
                       background: '#3b1219',
@@ -301,12 +400,12 @@ export default function App() {
                       color: '#f87171',
                     }}
                   >
-                    {unused.data.length} unused index{unused.data.length !== 1 ? 'es' : ''} found, wasting approximately{' '}
-                    {(unused.data.reduce((s, i) => s + i.index_size_bytes, 0) / 1024 / 1024).toFixed(2)} MB
+                    {unusedData.length} unused index{unusedData.length !== 1 ? 'es' : ''} found, wasting approximately{' '}
+                    {(unusedData.reduce((s, i) => s + i.index_size_bytes, 0) / 1024 / 1024).toFixed(2)} MB
                   </div>
                 )}
                 <DataTable
-                  data={unused.data}
+                  data={unusedData}
                   searchKeys={['table_name', 'index_name']}
                   columns={[
                     { key: 'table_name', label: 'Table' },
@@ -332,10 +431,10 @@ export default function App() {
             loading={mostUsed.loading}
             error={mostUsed.error}
           >
-            {mostUsed.data && (
+            {mostUsedData && (
               <>
                 <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={mostUsed.data.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
+                  <BarChart data={mostUsedData.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                     <XAxis dataKey="index_name" angle={-45} textAnchor="end" tick={{ fontSize: 10, fill: '#888' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#888' }} />
@@ -348,7 +447,7 @@ export default function App() {
                 </ResponsiveContainer>
                 <div style={{ marginTop: 24 }}>
                   <DataTable
-                    data={mostUsed.data}
+                    data={mostUsedData}
                     searchKeys={['table_name', 'index_name']}
                     columns={[
                       { key: 'table_name', label: 'Table' },
@@ -372,9 +471,9 @@ export default function App() {
             loading={tableSizes.loading}
             error={tableSizes.error}
           >
-            {tableSizes.data && (
+            {tableSizesData && (
               <DataTable
-                data={tableSizes.data}
+                data={tableSizesData}
                 searchKeys={['table_name']}
                 columns={[
                   { key: 'table_name', label: 'Table' },
@@ -418,11 +517,11 @@ export default function App() {
             loading={bloat.loading}
             error={bloat.error}
           >
-            {bloat.data && (
+            {bloatData && (
               <>
-                {bloat.data.length > 0 && (
+                {bloatData.length > 0 && (
                   <ResponsiveContainer width="100%" height={350}>
-                    <BarChart data={bloat.data.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
+                    <BarChart data={bloatData.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                       <XAxis dataKey="index_name" angle={-45} textAnchor="end" tick={{ fontSize: 10, fill: '#888' }} />
                       <YAxis tick={{ fontSize: 11, fill: '#888' }} unit="%" />
@@ -431,13 +530,13 @@ export default function App() {
                         formatter={(v: number) => `${v}%`}
                       />
                       <Bar dataKey="bloat_pct" fill="#f87171" radius={[4, 4, 0, 0]}>
-                        {bloat.data.slice(0, 20).map((_, i) => (
+                        {bloatData.slice(0, 20).map((_, i) => (
                           <Cell
                             key={i}
                             fill={
-                              bloat.data![i].bloat_pct > 50
+                              bloatData![i].bloat_pct > 50
                                 ? '#f87171'
-                                : bloat.data![i].bloat_pct > 20
+                                : bloatData![i].bloat_pct > 20
                                 ? '#facc15'
                                 : '#4ade80'
                             }
@@ -449,7 +548,7 @@ export default function App() {
                 )}
                 <div style={{ marginTop: 24 }}>
                   <DataTable
-                    data={bloat.data}
+                    data={bloatData}
                     searchKeys={['table_name', 'index_name']}
                     columns={[
                       { key: 'table_name', label: 'Table' },
@@ -480,14 +579,14 @@ export default function App() {
             loading={duplicates.loading}
             error={duplicates.error}
           >
-            {duplicates.data &&
-              (duplicates.data.length === 0 ? (
+            {duplicatesData &&
+              (duplicatesData.length === 0 ? (
                 <div style={{ padding: 20, color: '#4ade80', background: '#123b1e', borderRadius: 8 }}>
                   No duplicate indexes found
                 </div>
               ) : (
                 <DataTable
-                  data={duplicates.data}
+                  data={duplicatesData}
                   searchKeys={['table_name', 'index_columns']}
                   columns={[
                     { key: 'table_name', label: 'Table' },
@@ -511,10 +610,10 @@ export default function App() {
             loading={seqVsIdx.loading}
             error={seqVsIdx.error}
           >
-            {seqVsIdx.data && (
+            {seqVsIdxData && (
               <>
                 <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={seqVsIdx.data.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
+                  <BarChart data={seqVsIdxData.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                     <XAxis dataKey="table_name" angle={-45} textAnchor="end" tick={{ fontSize: 10, fill: '#888' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#888' }} />
@@ -528,7 +627,7 @@ export default function App() {
                 </ResponsiveContainer>
                 <div style={{ marginTop: 24 }}>
                   <DataTable
-                    data={seqVsIdx.data}
+                    data={seqVsIdxData}
                     searchKeys={['table_name']}
                     columns={[
                       { key: 'table_name', label: 'Table' },
@@ -568,14 +667,14 @@ export default function App() {
             loading={missing.loading}
             error={missing.error}
           >
-            {missing.data &&
-              (missing.data.length === 0 ? (
+            {missingData &&
+              (missingData.length === 0 ? (
                 <div style={{ padding: 20, color: '#4ade80', background: '#123b1e', borderRadius: 8 }}>
                   No obvious missing indexes detected
                 </div>
               ) : (
                 <DataTable
-                  data={missing.data}
+                  data={missingData}
                   searchKeys={['table_name']}
                   columns={[
                     { key: 'table_name', label: 'Table' },
@@ -605,10 +704,10 @@ export default function App() {
             loading={writeOverhead.loading}
             error={writeOverhead.error}
           >
-            {writeOverhead.data && (
+            {writeOverheadData && (
               <>
                 <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={writeOverhead.data.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
+                  <BarChart data={writeOverheadData.slice(0, 20)} margin={{ left: 20, right: 20, bottom: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                     <XAxis dataKey="table_name" angle={-45} textAnchor="end" tick={{ fontSize: 10, fill: '#888' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#888' }} />
@@ -623,7 +722,7 @@ export default function App() {
                 </ResponsiveContainer>
                 <div style={{ marginTop: 24 }}>
                   <DataTable
-                    data={writeOverhead.data}
+                    data={writeOverheadData}
                     searchKeys={['table_name']}
                     columns={[
                       { key: 'table_name', label: 'Table' },
@@ -667,11 +766,11 @@ export default function App() {
             loading={idxRatio.loading}
             error={idxRatio.error}
           >
-            {idxRatio.data && (
+            {idxRatioData && (
               <>
                 <ResponsiveContainer width="100%" height={350}>
                   <BarChart
-                    data={idxRatio.data.filter((r) => r.ratio > 0).slice(0, 25)}
+                    data={idxRatioData.filter((r) => r.ratio > 0).slice(0, 25)}
                     margin={{ left: 20, right: 20, bottom: 80 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
@@ -685,7 +784,7 @@ export default function App() {
                       formatter={(v: number) => `${v}x`}
                     />
                     <Bar dataKey="ratio" radius={[4, 4, 0, 0]}>
-                      {idxRatio.data
+                      {idxRatioData
                         .filter((r) => r.ratio > 0)
                         .slice(0, 25)
                         .map((r, i) => (
@@ -696,7 +795,7 @@ export default function App() {
                 </ResponsiveContainer>
                 <div style={{ marginTop: 24 }}>
                   <DataTable
-                    data={idxRatio.data}
+                    data={idxRatioData}
                     searchKeys={['table_name']}
                     columns={[
                       { key: 'table_name', label: 'Table' },

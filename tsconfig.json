@@ -9,5 +9,12 @@
     "jsx": "react-jsx",
     "outDir": "dist"
   },
-  "include": ["server/**/*.ts", "client/**/*.ts", "client/**/*.tsx"]
+  "include": [
+    "server/**/*.ts",
+    "client/**/*.ts",
+    "client/**/*.tsx",
+    "shared/**/*.ts",
+    "agent/**/*.ts",
+    "eval/**/*.ts"
+  ]
 }

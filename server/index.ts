@@ -2,12 +2,14 @@ import express, { type Request, type Response } from 'express'
 import cors from 'cors'
 import { pool } from './db.js'
 import { queries } from './queries.js'
+import { doctorRouter } from './doctor.js'
 
 const app = express()
 const PORT = parseInt(process.env.API_PORT || '4200')
 
 app.use(cors())
 app.use(express.json())
+app.use(doctorRouter)
 
 function handler(queryFn: (req: Request) => Promise<unknown>) {
   return async (req: Request, res: Response) => {
@@ -110,6 +112,8 @@ app.get(
   }),
 )
 
-app.listen(PORT, () => {
-  console.log(`Index Monitor API running on http://localhost:${PORT}`)
+// Bind to loopback only: this API is a local tool with no auth layer and must
+// not be reachable from the network.
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`Index Doctor API running on http://127.0.0.1:${PORT}`)
 })
